@@ -3,7 +3,8 @@
 int main(int argc, char **argv){
 	int **board;
 	int **pro_board;
-	int n,t,c,max_iters,numprocs,myid,k,i,j,tile;
+	int *tile_num,*sendcount,*displs;
+	int n,t,c,max_iters,numprocs,myid,k,i,j,tile,NP;
 	int finish = 0;
 	int n_iters = 0;
 	double BEGIN,STOP,dif1,dif2;
@@ -14,6 +15,7 @@ int main(int argc, char **argv){
 	//initial MPI environment and get the total number of processes and process id.
         MPI_Init(&argc, &argv);
         MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+	NP = numprocs;
         MPI_Comm_rank(MPI_COMM_WORLD,&myid);
 	MPI_Group world_group,group;
 	MPI_Comm_group(MPI_COMM_WORLD, &world_group);
@@ -51,40 +53,27 @@ int main(int argc, char **argv){
 		}
 		//Process0 alloc task to others
 		else{
-			int *tile_num = (int*)malloc(numprocs*sizeof(int));
+			tile_num = (int*)malloc(numprocs*sizeof(int));
+			displs = (int*)malloc(numprocs*sizeof(int));
+			sendcount = (int*)malloc(numprocs*sizeof(int));
 			tile_num = alloc_procs(numprocs,t);
 			k = tile_num[0]*tile;
-			int addk = k;
-			pro_board = build_array(k+2,n);
-			int actpro = numprocs;
-			actpro = numprocs;
+			int sum = 0;
 
-			for(i = 0; i < k; i++)
-				for(j = 0; j < n; j++)
-					pro_board[i+1][j] = board[i][j];
-			for(i = 0; i < numprocs; i++)
+			for(i = 0; i < NP; i++){
 				if(tile_num[i] == 0)
-					actpro--;
-			for(i = 1; i < numprocs; i++){
+					numprocs--;
+				sendcount[i] = tile_num[i]*tile*n;
+				displs[i] = sum;
+				sum += sendcount[i];
+			}
+			for(i = 1; i < NP; i++){
 				//printf("Process[%d] has %d tiles\n",i,tile_num[i]);
 				int k_temp = tile_num[i]*tile;
 				MPI_Send(&para,4,MPI_INT,i,1,MPI_COMM_WORLD);
 				MPI_Send(&k_temp,1,MPI_INT,i,2,MPI_COMM_WORLD);
-				int **temp_board;
-			       	temp_board = build_array(k_temp,n);
-				int x,y;
-				for(x = 0; x < k_temp; x++){
-					for(y = 0; y < n; y++){
-						temp_board[x][y] = board[x+addk][y];
-					}
-				}
-				MPI_Send(&temp_board[0][0],k_temp*n,MPI_INT,i,3,MPI_COMM_WORLD);
-				MPI_Send(&actpro,1,MPI_INT,i,4,MPI_COMM_WORLD);
-				free_malloc(temp_board);
-				addk +=	k_temp;
+				MPI_Send(&numprocs,1,MPI_INT,i,4,MPI_COMM_WORLD);
 			}
-			free(tile_num);
-			numprocs = actpro;
 		}
 	}
 	else{
@@ -96,16 +85,17 @@ int main(int argc, char **argv){
 		c = para[2];
 		tile = n/t;
 		max_iters = para[3];
-		pro_board = build_array(k+2,n);
-		MPI_Recv(&pro_board[1][0],k*n,MPI_INT,0,3,MPI_COMM_WORLD,&status);
 		MPI_Recv(&numprocs,1,MPI_INT,0,4,MPI_COMM_WORLD,&status);
 	}
 
 	int TAG = 5;
+	//Using scatterv to allocate the board
+	pro_board = build_array(k+2,n);
+	MPI_Scatterv(&board[0][0], sendcount, displs,MPI_INT,&pro_board[1][0],k*tile*n,MPI_INT,0,MPI_COMM_WORLD);
 
 	//Build a new comm, and terminate the process which has no job
 	int *ranks =(int*)calloc(numprocs,sizeof(int));
-	for(i = 0; i < numprocs; i++){
+	for(i = 0; i < NP; i++){
 		ranks[i] = i;
 		}
 	MPI_Group_incl(world_group, numprocs, ranks, &group);
@@ -115,6 +105,7 @@ int main(int argc, char **argv){
 		MPI_Finalize();
 		exit(0);
 	}
+
 	//Begin the parellel iterative computation
 	BEGIN = MPI_Wtime();
 	while(n_iters < max_iters && finish == 0){
@@ -171,7 +162,6 @@ int main(int argc, char **argv){
 
 	//Do the sequential iterative computation and compare the result
 	BEGIN = MPI_Wtime();
-	//print_board(board,n,n);
 	if(myid == 0){
 		n_iters = 0;
 		finish = 0;
@@ -196,8 +186,14 @@ int main(int argc, char **argv){
 	dif2 = STOP - BEGIN;
 
 	if(myid == 0){
-		printf("\ndif2 = %f\n",dif2);
+		printf("dif2 = %f\n",dif2);
+		printf("\nParallel Computation time is:%f\n",dif1);
+		printf("Sequential Computation time is:%f\n",dif2);
+		printf("dif2 - dif1 = %f\n", dif2-dif1);
 		free_malloc(board);
+		free(tile_num);
+		free(sendcount);
+		free(displs);
 	}
 	free_malloc(pro_board);
 	MPI_Finalize();
