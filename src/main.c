@@ -94,7 +94,7 @@ int main(int argc, char **argv){
 	MPI_Scatterv(&board[0][0], sendcount, displs,MPI_INT,&pro_board[1][0],k*tile*n,MPI_INT,0,MPI_COMM_WORLD);
 
 	//Build a new comm, and terminate the process which has no job
-	int *ranks =(int*)calloc(numprocs,sizeof(int));
+	int *ranks =(int*)calloc(NP,sizeof(int));
 	for(i = 0; i < NP; i++){
 		ranks[i] = i;
 		}
